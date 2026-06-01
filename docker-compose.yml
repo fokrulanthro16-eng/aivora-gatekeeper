@@ -1,0 +1,59 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Aivora Gatekeeper — local Docker Compose stack
+#
+# Services:
+#   backend   FastAPI gatekeeper engine  → http://localhost:8000
+#   frontend  Static React dashboard     → http://localhost:3000
+#
+# Supabase is NOT included here — run it separately via the Supabase CLI:
+#   npx supabase start
+#
+# Usage:
+#   cp .env.example .env          # fill in real values
+#   docker compose up --build -d
+#   docker compose logs -f
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  # ── Backend ──────────────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file: .env
+    environment:
+      ENV: ${ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - gatekeeper
+
+  # ── Frontend ──────────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${FRONTEND_ORIGIN:-http://localhost:8000}
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - gatekeeper
+
+networks:
+  gatekeeper:
+    driver: bridge
