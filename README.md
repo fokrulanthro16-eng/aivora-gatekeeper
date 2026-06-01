@@ -200,13 +200,38 @@ CLOSED ────────────────────────�
 
 ## Screenshots
 
-> Run the stack locally (see [Local Development](#local-development)) to generate these.
+> Image files are not yet committed. Place screenshots in `docs/screenshots/` using the filenames below.
+> See the [Screenshot Checklist](#screenshot-checklist) at the bottom of this file for exact capture instructions.
 
-| View | Preview |
-|---|---|
-| Dashboard — Billing Firewall Active | ![Dashboard](docs/screenshots/dashboard.png) |
-| AI Request Simulation Flow | ![Aggregator flow](docs/screenshots/aggregator-flow.png) |
-| Test Suite — 67 / 67 Passed | ![Tests](docs/screenshots/tests-passed.png) |
+### Dashboard Overview
+
+The single-screen Grandma Theory dashboard — one status indicator, one action button, live metrics.
+
+![Dashboard Overview](docs/screenshots/dashboard.png)
+
+### AI Request Flow
+
+End-to-end flow: User Request → Cost Estimate → Quota Check → Allow/Block → OpenRouter.
+
+![AI Request Flow](docs/screenshots/aggregator-flow.png)
+
+### Why AI Aggregators Need This
+
+Side-by-side comparison of a request without the gatekeeper versus with the gatekeeper active.
+
+![Without vs With Gatekeeper](docs/screenshots/without-vs-with.png)
+
+### Test Validation
+
+Full pytest run — 67 / 67 tests passed, no external services required.
+
+![Test Suite — 67 / 67 Passed](docs/screenshots/tests-passed.png)
+
+### Repository Overview
+
+Project layout showing backend, frontend, database migrations, scripts, and docs.
+
+![Repository Overview](docs/screenshots/repository.png)
 
 ---
 
@@ -426,6 +451,26 @@ aivora-gatekeeper/
     ├── MIGRATION_ORDER.md
     └── VALIDATION_CHECKLIST.md
 ```
+
+---
+
+## Screenshot Checklist
+
+Place each file in `docs/screenshots/` with the exact filename shown.
+
+| # | Filename | Title | What to capture |
+|---|----------|--------|-----------------|
+| 1 | `dashboard.png` | Dashboard Overview | Browser at `http://localhost:5173` — full viewport showing 🟢 PROTECTED status, the Activate Billing Shield button, and the four metric cards |
+| 2 | `aggregator-flow.png` | AI Request Flow | Browser simulation panel showing the step-by-step flow (click ▶ Allowed or ▶ Blocked to animate it) |
+| 3 | `without-vs-with.png` | Why AI Aggregators Need This | The "Without Gatekeeper / With Gatekeeper" comparison section visible on the dashboard |
+| 4 | `tests-passed.png` | Test Validation | Terminal window showing `pytest tests/ -v` output ending with `67 passed, 1 warning in 0.65s` |
+| 5 | `repository.png` | Repository Overview | VS Code or file explorer showing the full project tree (backend, frontend, database, docs, scripts) |
+
+Recommended capture settings:
+- Browser screenshots: 1440 × 900 px viewport, dark mode, clean address bar
+- Terminal screenshots: dark background, font size 13–14 pt, full output visible without scroll
+
+Once files are placed, the README will render them automatically. No code changes needed.
 
 ---
 
