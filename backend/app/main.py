@@ -27,8 +27,11 @@ from fastapi.responses import JSONResponse
 
 from app.core.config import get_settings
 from app.middleware.gateway import GatewayMiddleware
+from app.routes.admin import router as admin_router
 from app.routes.aggregator import router as aggregator_router
 from app.routes.gatekeeper import router as gatekeeper_router
+from app.routes.invoice import router as invoice_router
+from app.routes.workspace import router as workspace_router
 from app.services.cache import get_quota_cache
 from app.services.supabase_client import init_supabase_client
 
@@ -140,6 +143,9 @@ def create_app() -> FastAPI:
     # ── Routes ─────────────────────────────────────────────────────────────────
     app.include_router(gatekeeper_router)
     app.include_router(aggregator_router)
+    app.include_router(workspace_router)
+    app.include_router(admin_router)
+    app.include_router(invoice_router)
 
     # ── Global exception handler ───────────────────────────────────────────────
     @app.exception_handler(Exception)

@@ -1,6 +1,15 @@
 """
-Usage counter service — thin wrapper around the check_and_consume_ai_usage
-Supabase RPC and the circuit breaker.
+Usage counter service — wraps the workspace_check_and_consume_usage Supabase
+RPC and the circuit breaker.
+
+workspace_check_and_consume_usage() is a superset of check_and_consume_ai_usage():
+  • If the calling user has a workspace_id, it enforces the workspace monthly
+    budget cap FIRST, then delegates to the per-user quota checks.
+  • If the user has no workspace_id, it is equivalent to the original
+    check_and_consume_ai_usage() — fully backward-compatible.
+
+After each successful workspace deduction the function schedules a background
+anomaly evaluation task (fire-and-forget).
 
 All quota decisions for AI provider calls should go through
 check_ai_usage() in this module.  Never call the Supabase RPC directly
@@ -26,15 +35,23 @@ async def _rpc_check_and_consume(
     estimated_cost: float,
 ) -> dict[str, Any]:
     """
-    Call the check_and_consume_ai_usage PL/pgSQL function via Supabase RPC.
+    Call workspace_check_and_consume_usage() — the hierarchical quota gate.
+
+    Enforces (in order):
+      1. Workspace monthly USD budget cap  (skipped when user has no workspace)
+      2. User monthly message limit
+      3. User monthly dollar budget
+      4. User token bucket
+
     Raises on any network / HTTP error so the circuit breaker counts the failure.
+    On a successful allow, schedules background anomaly detection.
     """
     client = get_supabase_client()
     timeout = get_settings().SUPABASE_RPC_TIMEOUT_SECONDS
 
     response = await asyncio.wait_for(
         client.rpc(
-            "check_and_consume_ai_usage",
+            "workspace_check_and_consume_usage",
             {
                 "p_user_uuid":        user_uuid,
                 "p_provider":         provider,
@@ -45,7 +62,24 @@ async def _rpc_check_and_consume(
         ).execute(),
         timeout=timeout,
     )
-    return response.data  # type: ignore[return-value]
+    data: dict[str, Any] = response.data  # type: ignore[return-value]
+
+    # Fire-and-forget anomaly evaluation when the request was allowed
+    # and the user belongs to a workspace.
+    workspace_id: str | None = data.get("workspace_id")
+    if data.get("allowed") and workspace_id:
+        asyncio.create_task(_run_anomaly_check(workspace_id))
+
+    return data
+
+
+async def _run_anomaly_check(workspace_id: str) -> None:
+    """Background anomaly evaluation — swallows all errors."""
+    try:
+        from app.services.anomaly_detector import evaluate_and_store
+        await evaluate_and_store(workspace_id)
+    except Exception as exc:
+        log.warning("anomaly_check_task_error", workspace_id=workspace_id, error=str(exc))
 
 
 async def _fallback_check_usage(

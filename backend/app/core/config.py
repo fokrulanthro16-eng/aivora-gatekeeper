@@ -58,6 +58,19 @@ class Settings(BaseSettings):
     # Set DEMO_MODE=true only for local development without a Supabase instance.
     DEMO_MODE: bool = False
 
+    # ── Admin API ──────────────────────────────────────────────────────────────
+    # Required as X-Admin-Key header to access /v1/admin/* routes.
+    # Leave empty to disable the admin API entirely.
+    ADMIN_API_KEY: str = ""
+
+    # ── Spending anomaly detection ─────────────────────────────────────────────
+    # Daily burn rate must exceed baseline × this multiplier to trigger a spike.
+    ANOMALY_SPIKE_MULTIPLIER: float = Field(default=3.0, ge=1.5, le=100.0)
+    # Project month-end spend must exceed budget × this % to trigger a trajectory alert.
+    ANOMALY_TRAJECTORY_PCT: float = Field(default=120.0, ge=101.0, le=1000.0)
+    # Minimum daily spend (USD) required before anomaly fires — avoids noise.
+    ANOMALY_MIN_DAILY_SPEND_USD: float = Field(default=0.10, ge=0.0, le=100.0)
+
     # ── Gateway behaviour ──────────────────────────────────────────────────────
     # Comma-separated exact paths that bypass quota checking.
     GATEWAY_BYPASS_PATHS: str = (
@@ -67,6 +80,9 @@ class Settings(BaseSettings):
         "/v1/aggregator/status,/v1/aggregator/check-usage,"
         "/v1/aggregator/proxy-openrouter,/v1/webhooks/polar"
     )
+    # Comma-separated path PREFIXES that bypass quota checking.
+    # Dynamic route segments (/{id}/...) are covered by prefix matching.
+    GATEWAY_BYPASS_PREFIXES: str = "/v1/workspaces,/v1/admin,/v1/invoices"
     # When True the gate fails open (allows) if Supabase is unreachable.
     # Production default is False (fail-closed). Only set True in demo mode
     # or if you explicitly accept the over-spend risk during outages.
@@ -90,6 +106,10 @@ class Settings(BaseSettings):
         return frozenset(
             p.strip() for p in self.GATEWAY_BYPASS_PATHS.split(",") if p.strip()
         )
+
+    @property
+    def bypass_prefixes_list(self) -> list[str]:
+        return [p.strip() for p in self.GATEWAY_BYPASS_PREFIXES.split(",") if p.strip()]
 
 
 @lru_cache(maxsize=1)

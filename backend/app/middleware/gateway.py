@@ -113,8 +113,10 @@ class GatewayMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: Any) -> Response:
         path = request.url.path
 
-        # ── Bypass check ───────────────────────────────────────────────────────
+        # ── Bypass check (exact paths + prefix-based) ─────────────────────────
         if path in self._settings.bypass_paths_set:
+            return await call_next(request)
+        if any(path.startswith(prefix) for prefix in self._settings.bypass_prefixes_list):
             return await call_next(request)
 
         # ── 1. Validate X-User-UUID ────────────────────────────────────────────
