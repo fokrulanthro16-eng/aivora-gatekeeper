@@ -9,7 +9,13 @@ Admin dashboard API.
   GET    /v1/admin/anomalies                         — global unresolved anomalies
   PATCH  /v1/admin/anomalies/{anomaly_id}/resolve    — mark anomaly resolved
 
-All routes require the X-Admin-Key header matching ADMIN_API_KEY in settings.
+Authentication: requires a valid Supabase JWT with app_metadata.is_admin == True.
+
+To grant admin access to a user run in the Supabase SQL Editor (service_role):
+    UPDATE auth.users
+    SET raw_app_meta_data = raw_app_meta_data || '{"is_admin":true}'
+    WHERE id = '<user-uuid>';
+The user must obtain a fresh JWT (re-login) for the claim to take effect.
 """
 from __future__ import annotations
 
@@ -19,9 +25,8 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.security import APIKeyHeader
 
-from app.core.config import get_settings
+from app.core.security import require_admin_jwt
 from app.models.workspace_schemas import (
     PlatformStats,
     SpendingAnomalyRead,
@@ -35,26 +40,10 @@ from app.services.supabase_client import get_supabase_client, is_supabase_availa
 log = structlog.get_logger(__name__)
 router = APIRouter(prefix="/v1/admin", tags=["Admin"])
 
-_admin_key_header = APIKeyHeader(name="X-Admin-Key", auto_error=False)
-
-
-async def _require_admin(key: str | None = Depends(_admin_key_header)) -> None:
-    expected = get_settings().ADMIN_API_KEY
-    if not expected:
-        raise HTTPException(
-            status_code=503,
-            detail="Admin API is disabled. Set ADMIN_API_KEY in your environment.",
-        )
-    if not key or key != expected:
-        raise HTTPException(
-            status_code=403,
-            detail="Invalid or missing X-Admin-Key header.",
-        )
-
 
 # ── Platform stats ─────────────────────────────────────────────────────────────
 
-@router.get("/stats", response_model=PlatformStats, dependencies=[Depends(_require_admin)])
+@router.get("/stats", response_model=PlatformStats, dependencies=[Depends(require_admin_jwt)])
 async def platform_stats(
     year:  int | None = Query(default=None, ge=2024, le=2099),
     month: int | None = Query(default=None, ge=1,    le=12),
@@ -94,7 +83,7 @@ async def platform_stats(
 @router.get(
     "/workspaces",
     response_model=list[WorkspaceWithStats],
-    dependencies=[Depends(_require_admin)],
+    dependencies=[Depends(require_admin_jwt)],
 )
 async def list_workspaces(
     limit:       int  = Query(default=50, ge=1, le=200),
@@ -135,7 +124,7 @@ async def list_workspaces(
 @router.get(
     "/workspaces/{workspace_id}",
     response_model=WorkspaceWithStats,
-    dependencies=[Depends(_require_admin)],
+    dependencies=[Depends(require_admin_jwt)],
 )
 async def get_workspace(workspace_id: str) -> WorkspaceWithStats:
     ws = await ws_svc.get_workspace(workspace_id)
@@ -169,7 +158,7 @@ async def get_workspace(workspace_id: str) -> WorkspaceWithStats:
 @router.patch(
     "/workspaces/{workspace_id}/suspend",
     response_model=dict,
-    dependencies=[Depends(_require_admin)],
+    dependencies=[Depends(require_admin_jwt)],
 )
 async def suspend_workspace(workspace_id: str, payload: SuspendRequest) -> dict:
     row = await ws_svc.suspend_workspace(workspace_id, payload.reason)
@@ -182,7 +171,7 @@ async def suspend_workspace(workspace_id: str, payload: SuspendRequest) -> dict:
 @router.patch(
     "/workspaces/{workspace_id}/unsuspend",
     response_model=dict,
-    dependencies=[Depends(_require_admin)],
+    dependencies=[Depends(require_admin_jwt)],
 )
 async def unsuspend_workspace(workspace_id: str) -> dict:
     row = await ws_svc.unsuspend_workspace(workspace_id)
@@ -197,7 +186,7 @@ async def unsuspend_workspace(workspace_id: str) -> dict:
 @router.get(
     "/anomalies",
     response_model=list[SpendingAnomalyRead],
-    dependencies=[Depends(_require_admin)],
+    dependencies=[Depends(require_admin_jwt)],
 )
 async def global_anomalies(limit: int = Query(default=50, ge=1, le=200)) -> list[SpendingAnomalyRead]:
     rows = await get_all_active_anomalies(limit=limit)
@@ -207,7 +196,7 @@ async def global_anomalies(limit: int = Query(default=50, ge=1, le=200)) -> list
 @router.patch(
     "/anomalies/{anomaly_id}/resolve",
     response_model=dict,
-    dependencies=[Depends(_require_admin)],
+    dependencies=[Depends(require_admin_jwt)],
 )
 async def resolve(anomaly_id: str) -> dict:
     ok = await resolve_anomaly(anomaly_id)

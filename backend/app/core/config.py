@@ -58,10 +58,11 @@ class Settings(BaseSettings):
     # Set DEMO_MODE=true only for local development without a Supabase instance.
     DEMO_MODE: bool = False
 
-    # ── Admin API ──────────────────────────────────────────────────────────────
-    # Required as X-Admin-Key header to access /v1/admin/* routes.
-    # Leave empty to disable the admin API entirely.
-    ADMIN_API_KEY: str = ""
+    # ── Authentication ─────────────────────────────────────────────────────────
+    # JWT secret from Supabase project Settings → API → JWT Settings.
+    # Required for workspace and admin routes to verify user identity.
+    # If empty those routes return 503.
+    SUPABASE_JWT_SECRET: str = ""
 
     # ── Spending anomaly detection ─────────────────────────────────────────────
     # Daily burn rate must exceed baseline × this multiplier to trigger a spike.
@@ -82,7 +83,7 @@ class Settings(BaseSettings):
     )
     # Comma-separated path PREFIXES that bypass quota checking.
     # Dynamic route segments (/{id}/...) are covered by prefix matching.
-    GATEWAY_BYPASS_PREFIXES: str = "/v1/workspaces,/v1/admin,/v1/invoices"
+    GATEWAY_BYPASS_PREFIXES: str = "/v1/workspaces,/v1/admin,/v1/invoices,/metrics,/ready"
     # When True the gate fails open (allows) if Supabase is unreachable.
     # Production default is False (fail-closed). Only set True in demo mode
     # or if you explicitly accept the over-spend risk during outages.

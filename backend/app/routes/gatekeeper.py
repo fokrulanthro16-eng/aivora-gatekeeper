@@ -1,7 +1,8 @@
 """
 Gatekeeper API routes.
 
-  GET  /health                          — liveness probe
+  GET  /health                          — liveness probe (k8s livenessProbe)
+  GET  /ready                           — readiness probe (k8s readinessProbe)
   GET  /v1/gatekeeper/status            — circuit breaker + cache diagnostics
   POST /v1/gatekeeper/protect           — explicit quota check + deduction
   POST /v1/gatekeeper/simulate-request  — read-only quota probe (no deduction)
@@ -15,6 +16,8 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from app.core.config import get_settings
 from app.models.schemas import (
@@ -37,7 +40,13 @@ router = APIRouter()
 _settings = get_settings()
 
 
-# ── /health ───────────────────────────────────────────────────────────────────
+class ReadyResponse(BaseModel):
+    ready: bool
+    supabase: bool
+    circuit_breaker: str
+
+
+# ── /health (liveness) ────────────────────────────────────────────────────────
 
 @router.get("/health", response_model=HealthResponse, tags=["Health"])
 async def health() -> HealthResponse:
@@ -53,6 +62,40 @@ async def health() -> HealthResponse:
         version=_settings.APP_VERSION,
         env=_settings.ENV,
     )
+
+
+# ── /ready (readiness) ────────────────────────────────────────────────────────
+
+@router.get("/ready", tags=["Health"], summary="Kubernetes readiness probe.")
+async def ready() -> JSONResponse:
+    """
+    Returns 200 when the backend can serve traffic, 503 when it cannot.
+
+    Not-ready conditions:
+      - Supabase client is not initialised AND DEMO_MODE=false
+      - Circuit breaker is OPEN in production mode (Supabase actively unreachable)
+
+    Kubernetes readinessProbe config:
+        httpGet:
+          path: /ready
+          port: 8000
+        initialDelaySeconds: 5
+        periodSeconds: 10
+        failureThreshold: 3
+    """
+    cb          = get_circuit_breaker()
+    supabase_ok = is_supabase_available()
+    cb_state    = cb.state.value
+
+    ready_flag = supabase_ok or _settings.DEMO_MODE
+
+    payload = ReadyResponse(
+        ready=ready_flag,
+        supabase=supabase_ok,
+        circuit_breaker=cb_state,
+    )
+    status_code = 200 if ready_flag else 503
+    return JSONResponse(content=payload.model_dump(), status_code=status_code)
 
 
 # ── /v1/gatekeeper/status ──────────────────────────────────────────────────────

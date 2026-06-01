@@ -11,16 +11,21 @@ Workspace management routes.
   GET    /v1/workspaces/{workspace_id}/alerts          — budget alerts
   GET    /v1/workspaces/{workspace_id}/anomalies       — spending anomalies
 
-All routes are in GatewayMiddleware's bypass-prefix list (/v1/workspaces) and
-therefore do not consume token-bucket quota.  Caller authentication relies on
-Supabase RLS at the database level; the service role key used by this backend
-has unrestricted access (consistent with existing route patterns).
+Authentication: every route requires a valid Supabase JWT in the
+Authorization: Bearer <token> header.
+
+RBAC:
+  • POST /workspaces         — any authenticated user (owner_uuid taken from JWT)
+  • GET  reads               — workspace member or higher
+  • PATCH update             — workspace admin or owner
+  • POST/DELETE members      — workspace admin or owner
 """
 from __future__ import annotations
 
 import structlog
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 
+from app.core.security import WorkspaceRoleChecker, get_current_user_uuid
 from app.models.workspace_schemas import (
     BudgetStatus,
     SpendingAnomalyRead,
@@ -38,12 +43,20 @@ from app.services.anomaly_detector import get_active_anomalies
 log = structlog.get_logger(__name__)
 router = APIRouter(prefix="/v1/workspaces", tags=["Workspaces"])
 
+# Reusable dependency instances
+_member_dep = WorkspaceRoleChecker("member")
+_admin_dep  = WorkspaceRoleChecker("admin")
+_owner_dep  = WorkspaceRoleChecker("owner")
+
 
 # ── Create ─────────────────────────────────────────────────────────────────────
 
 @router.post("", response_model=WorkspaceRead, status_code=201)
-async def create_workspace(payload: WorkspaceCreate) -> WorkspaceRead:
-    # Reject duplicate slugs early with a clear error
+async def create_workspace(
+    payload: WorkspaceCreate,
+    current_user: str = Depends(get_current_user_uuid),
+) -> WorkspaceRead:
+    # Owner UUID is taken from the verified JWT, not the request body
     existing = await ws_svc.get_workspace_by_slug(payload.slug)
     if existing:
         raise HTTPException(status_code=409, detail=f"Slug '{payload.slug}' is already taken.")
@@ -51,7 +64,7 @@ async def create_workspace(payload: WorkspaceCreate) -> WorkspaceRead:
     row = await ws_svc.create_workspace(
         name=payload.name,
         slug=payload.slug,
-        owner_uuid=str(payload.owner_uuid),
+        owner_uuid=current_user,        # always from JWT, never from body
         plan=payload.plan,
         monthly_budget_usd=payload.monthly_budget_usd,
     )
@@ -63,7 +76,10 @@ async def create_workspace(payload: WorkspaceCreate) -> WorkspaceRead:
 # ── Read ───────────────────────────────────────────────────────────────────────
 
 @router.get("/{workspace_id}", response_model=WorkspaceRead)
-async def get_workspace(workspace_id: str) -> WorkspaceRead:
+async def get_workspace(
+    workspace_id: str,
+    _: str = Depends(_member_dep),
+) -> WorkspaceRead:
     row = await ws_svc.get_workspace(workspace_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Workspace not found.")
@@ -73,13 +89,14 @@ async def get_workspace(workspace_id: str) -> WorkspaceRead:
 # ── Update ─────────────────────────────────────────────────────────────────────
 
 @router.patch("/{workspace_id}", response_model=WorkspaceRead)
-async def update_workspace(workspace_id: str, payload: WorkspaceUpdate) -> WorkspaceRead:
-    updates: dict = {
-        k: v for k, v in payload.model_dump().items() if v is not None
-    }
+async def update_workspace(
+    workspace_id: str,
+    payload: WorkspaceUpdate,
+    _: str = Depends(_admin_dep),
+) -> WorkspaceRead:
+    updates: dict = {k: v for k, v in payload.model_dump().items() if v is not None}
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update.")
-
     row = await ws_svc.update_workspace(workspace_id, updates)
     if row is None:
         raise HTTPException(status_code=404, detail="Workspace not found or update failed.")
@@ -89,13 +106,20 @@ async def update_workspace(workspace_id: str, payload: WorkspaceUpdate) -> Works
 # ── Members ────────────────────────────────────────────────────────────────────
 
 @router.get("/{workspace_id}/members", response_model=list[WorkspaceMemberRead])
-async def list_members(workspace_id: str) -> list[WorkspaceMemberRead]:
+async def list_members(
+    workspace_id: str,
+    _: str = Depends(_member_dep),
+) -> list[WorkspaceMemberRead]:
     rows = await ws_svc.get_members(workspace_id)
     return [WorkspaceMemberRead(**r) for r in rows]
 
 
 @router.post("/{workspace_id}/members", response_model=WorkspaceMemberRead, status_code=201)
-async def add_member(workspace_id: str, payload: WorkspaceMemberCreate) -> WorkspaceMemberRead:
+async def add_member(
+    workspace_id: str,
+    payload: WorkspaceMemberCreate,
+    _: str = Depends(_admin_dep),
+) -> WorkspaceMemberRead:
     row = await ws_svc.add_member(
         workspace_id=workspace_id,
         user_uuid=str(payload.user_uuid),
@@ -107,7 +131,11 @@ async def add_member(workspace_id: str, payload: WorkspaceMemberCreate) -> Works
 
 
 @router.delete("/{workspace_id}/members/{user_uuid}", status_code=204)
-async def remove_member(workspace_id: str, user_uuid: str) -> None:
+async def remove_member(
+    workspace_id: str,
+    user_uuid: str,
+    _: str = Depends(_admin_dep),
+) -> None:
     ok = await ws_svc.remove_member(workspace_id, user_uuid)
     if not ok:
         raise HTTPException(status_code=404, detail="Member not found or removal failed.")
@@ -116,7 +144,10 @@ async def remove_member(workspace_id: str, user_uuid: str) -> None:
 # ── Usage & analytics ──────────────────────────────────────────────────────────
 
 @router.get("/{workspace_id}/usage", response_model=WorkspaceMonthlyUsageRead | None)
-async def current_usage(workspace_id: str) -> WorkspaceMonthlyUsageRead | None:
+async def current_usage(
+    workspace_id: str,
+    _: str = Depends(_member_dep),
+) -> WorkspaceMonthlyUsageRead | None:
     row = await ws_svc.get_current_month_usage(workspace_id)
     if row is None:
         return None
@@ -124,12 +155,18 @@ async def current_usage(workspace_id: str) -> WorkspaceMonthlyUsageRead | None:
 
 
 @router.get("/{workspace_id}/alerts", response_model=BudgetStatus)
-async def budget_alerts(workspace_id: str) -> BudgetStatus:
+async def budget_alerts(
+    workspace_id: str,
+    _: str = Depends(_member_dep),
+) -> BudgetStatus:
     status = await alert_svc.get_budget_status(workspace_id)
     return BudgetStatus(**status)
 
 
 @router.get("/{workspace_id}/anomalies", response_model=list[SpendingAnomalyRead])
-async def anomalies(workspace_id: str) -> list[SpendingAnomalyRead]:
+async def anomalies(
+    workspace_id: str,
+    _: str = Depends(_admin_dep),
+) -> list[SpendingAnomalyRead]:
     rows = await get_active_anomalies(workspace_id)
     return [SpendingAnomalyRead(**r) for r in rows]
